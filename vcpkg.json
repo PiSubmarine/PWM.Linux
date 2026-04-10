@@ -1,6 +1,7 @@
 {
   "dependencies": [
     "spdlog",
-    "gtest"
+    "gtest",
+    "boost-program-options"
   ]
 }
