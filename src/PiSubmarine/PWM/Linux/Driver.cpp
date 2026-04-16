@@ -1,10 +1,12 @@
 #include "PiSubmarine/PWM/Linux/Driver.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <ranges>
 #include <string_view>
 #include <system_error>
 #include <thread>
@@ -48,6 +50,35 @@ namespace PiSubmarine::PWM::Linux
 			return pwmChannelPath / nodeName;
 		}
 
+		[[nodiscard]] bool AreRequiredChannelNodesPresent(const std::filesystem::path& pwmChannelPath)
+		{
+			constexpr std::array RequiredNodeNames{"enable", "period", "duty_cycle"};
+
+			return std::ranges::all_of(
+				RequiredNodeNames,
+				[&pwmChannelPath](const char* const nodeName)
+				{
+					return std::filesystem::exists(BuildNodePath(pwmChannelPath, nodeName));
+				});
+		}
+
+		[[nodiscard]] Result<void> WaitForChannelNodes(const std::filesystem::path& pwmChannelPath,
+		                                               const std::chrono::milliseconds exportCheckInterval,
+		                                               const size_t exportCheckAttempts)
+		{
+			for (size_t attempt = 0; attempt < exportCheckAttempts; ++attempt)
+			{
+				if (AreRequiredChannelNodesPresent(pwmChannelPath))
+				{
+					return {};
+				}
+
+				std::this_thread::sleep_for(exportCheckInterval);
+			}
+
+			return MakeCommunicationError(ErrorCode::ExportTimedOut);
+		}
+
 		[[nodiscard]] Result<std::uint32_t> ParseChannelIndex(const std::filesystem::path& pwmChannelPath)
 		{
 			const auto channelName = pwmChannelPath.filename().string();
@@ -72,9 +103,11 @@ namespace PiSubmarine::PWM::Linux
 			}
 		}
 
-		[[nodiscard]] Result<void> EnsureChannelExported(const std::filesystem::path& pwmChannelPath, size_t attempts, std::chrono::milliseconds interval)
+		[[nodiscard]] Result<void> EnsureChannelExported(const std::filesystem::path& pwmChannelPath,
+		                                                 const std::chrono::milliseconds exportCheckInterval,
+		                                                 const size_t exportCheckAttempts)
 		{
-			if (std::filesystem::exists(BuildNodePath(pwmChannelPath, "enable")))
+			if (AreRequiredChannelNodesPresent(pwmChannelPath))
 			{
 				return {};
 			}
@@ -93,29 +126,23 @@ namespace PiSubmarine::PWM::Linux
 			}
 
 			exportFile << channelIndexExpected.value();
-			if (exportFile.fail())
-			{
-				if (std::filesystem::exists(BuildNodePath(pwmChannelPath, "enable")))
-				{
-					return {};
-				}
-
-				return MakeCommunicationError(ErrorCode::ExportWriteFailed);
-			}
-
 			exportFile.flush();
+			const auto exportWriteFailed = exportFile.fail();
+			exportFile.close();
 
-			for (int attempt = 0; attempt < attempts; ++attempt)
+			if (exportWriteFailed)
 			{
-				if (std::filesystem::exists(BuildNodePath(pwmChannelPath, "enable")))
+				const auto waitResult =
+					WaitForChannelNodes(pwmChannelPath, exportCheckInterval, exportCheckAttempts);
+				if (waitResult.has_value())
 				{
 					return {};
 				}
 
-				std::this_thread::sleep_for(interval);
+				return waitResult;
 			}
 
-			return MakeCommunicationError(ErrorCode::ExportTimedOut);
+			return WaitForChannelNodes(pwmChannelPath, exportCheckInterval, exportCheckAttempts);
 		}
 
 		[[nodiscard]] Result<std::uint64_t> ReadUint64(const std::filesystem::path& path)
@@ -234,7 +261,9 @@ namespace PiSubmarine::PWM::Linux
 
 	Result<void> Driver::SetEnabled(const bool enabled)
 	{
-		if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath, m_ExportCheckAttempts, m_ExportCheckInterval); !exportResult.has_value())
+		if (const auto exportResult =
+			    EnsureChannelExported(m_PwmChannelPath, m_ExportCheckInterval, m_ExportCheckAttempts);
+		    !exportResult.has_value())
 		{
 			return exportResult;
 		}
@@ -298,7 +327,9 @@ namespace PiSubmarine::PWM::Linux
 
 	Result<bool> Driver::IsEnabled() const
 	{
-		if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath, m_ExportCheckAttempts, m_ExportCheckInterval); !exportResult.has_value())
+		if (const auto exportResult =
+			    EnsureChannelExported(m_PwmChannelPath, m_ExportCheckInterval, m_ExportCheckAttempts);
+		    !exportResult.has_value())
 		{
 			return std::unexpected(exportResult.error());
 		}
@@ -321,7 +352,9 @@ namespace PiSubmarine::PWM::Linux
 		}
 		else
 		{
-			if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath, m_ExportCheckAttempts, m_ExportCheckInterval); !exportResult.has_value())
+			if (const auto exportResult =
+				    EnsureChannelExported(m_PwmChannelPath, m_ExportCheckInterval, m_ExportCheckAttempts);
+			    !exportResult.has_value())
 			{
 				return std::unexpected(exportResult.error());
 			}
@@ -389,7 +422,9 @@ namespace PiSubmarine::PWM::Linux
 		}
 		else
 		{
-			if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath, m_ExportCheckAttempts, m_ExportCheckInterval); !exportResult.has_value())
+			if (const auto exportResult =
+				    EnsureChannelExported(m_PwmChannelPath, m_ExportCheckInterval, m_ExportCheckAttempts);
+			    !exportResult.has_value())
 			{
 				return std::unexpected(exportResult.error());
 			}
@@ -440,7 +475,9 @@ namespace PiSubmarine::PWM::Linux
 		}
 		else
 		{
-			if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath, m_ExportCheckAttempts, m_ExportCheckInterval); !exportResult.has_value())
+			if (const auto exportResult =
+				    EnsureChannelExported(m_PwmChannelPath, m_ExportCheckInterval, m_ExportCheckAttempts);
+			    !exportResult.has_value())
 			{
 				return exportResult;
 			}
@@ -503,7 +540,9 @@ namespace PiSubmarine::PWM::Linux
 			return {};
 		}
 
-		if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath, m_ExportCheckAttempts, m_ExportCheckInterval); !exportResult.has_value())
+		if (const auto exportResult =
+			    EnsureChannelExported(m_PwmChannelPath, m_ExportCheckInterval, m_ExportCheckAttempts);
+		    !exportResult.has_value())
 		{
 			return exportResult;
 		}
