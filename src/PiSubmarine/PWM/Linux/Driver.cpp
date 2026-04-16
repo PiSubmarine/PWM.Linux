@@ -6,27 +6,55 @@
 #include <cstdint>
 #include <fstream>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
+
+#include "PiSubmarine/Error/Api/MakeError.h"
 
 namespace PiSubmarine::PWM::Linux
 {
     namespace
     {
+        using ErrorCondition = PiSubmarine::Error::Api::ErrorCondition;
+
+        template<typename T>
+        using Result = PiSubmarine::Error::Api::Result<T>;
+
         constexpr double OneSecondNs = 1'000'000'000.0;
 
-        std::filesystem::path BuildNodePath(const std::filesystem::path& pwmChannelPath, const char* nodeName)
+        [[nodiscard]] Result<void> MakeContractError() noexcept
+        {
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
+        }
+
+        [[nodiscard]] Result<void> MakeCommunicationError() noexcept
+        {
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::CommunicationError));
+        }
+
+        [[nodiscard]] Result<void> MakeCommunicationError(const std::error_code cause) noexcept
+        {
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::CommunicationError, cause));
+        }
+
+        [[nodiscard]] Result<void> MakeDeviceError() noexcept
+        {
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
+        }
+
+        [[nodiscard]] std::filesystem::path BuildNodePath(const std::filesystem::path& pwmChannelPath, const char* const nodeName)
         {
             return pwmChannelPath / nodeName;
         }
 
-        std::expected<std::uint32_t, Api::IDriver::Error> ParseChannelIndex(const std::filesystem::path& pwmChannelPath)
+        [[nodiscard]] Result<std::uint32_t> ParseChannelIndex(const std::filesystem::path& pwmChannelPath)
         {
             const auto channelName = pwmChannelPath.filename().string();
             constexpr std::string_view Prefix = "pwm";
             if (channelName.size() <= Prefix.size() || channelName.rfind(Prefix.data(), 0) != 0)
             {
-                return std::unexpected(Api::IDriver::Error::InvalidArgument);
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
             }
 
             try
@@ -36,28 +64,28 @@ namespace PiSubmarine::PWM::Linux
             }
             catch (...)
             {
-                return std::unexpected(Api::IDriver::Error::InvalidArgument);
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
             }
         }
 
-        Api::IDriver::Error EnsureChannelExported(const std::filesystem::path& pwmChannelPath)
+        [[nodiscard]] Result<void> EnsureChannelExported(const std::filesystem::path& pwmChannelPath)
         {
             if (std::filesystem::exists(BuildNodePath(pwmChannelPath, "enable")))
             {
-                return Api::IDriver::Error::Ok;
+                return {};
             }
 
             const auto chipPath = pwmChannelPath.parent_path();
             const auto channelIndexExpected = ParseChannelIndex(pwmChannelPath);
             if (!channelIndexExpected.has_value())
             {
-                return channelIndexExpected.error();
+                return std::unexpected(channelIndexExpected.error());
             }
 
             std::ofstream exportFile(chipPath / "export");
             if (!exportFile.is_open())
             {
-                return Api::IDriver::Error::IoFailure;
+                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
             }
 
             exportFile << channelIndexExpected.value();
@@ -65,120 +93,118 @@ namespace PiSubmarine::PWM::Linux
             {
                 if (std::filesystem::exists(BuildNodePath(pwmChannelPath, "enable")))
                 {
-                    return Api::IDriver::Error::Ok;
+                    return {};
                 }
 
-                return Api::IDriver::Error::IoFailure;
+                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
             }
 
             for (int attempt = 0; attempt < 50; ++attempt)
             {
                 if (std::filesystem::exists(BuildNodePath(pwmChannelPath, "enable")))
                 {
-                    return Api::IDriver::Error::Ok;
+                    return {};
                 }
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
 
-            return Api::IDriver::Error::Busy;
+            return MakeCommunicationError(std::make_error_code(std::errc::timed_out));
         }
 
-        Api::IDriver::Error ReadUint64(const std::filesystem::path& path, std::uint64_t& value)
+        [[nodiscard]] Result<std::uint64_t> ReadUint64(const std::filesystem::path& path)
         {
             std::ifstream input(path);
             if (!input.is_open())
             {
-                return Api::IDriver::Error::IoFailure;
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                    ErrorCondition::CommunicationError,
+                    std::make_error_code(std::errc::io_error)));
             }
 
+            std::uint64_t value = 0;
             input >> value;
             if (input.fail())
             {
-                return Api::IDriver::Error::ProtocolError;
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
             }
 
-            return Api::IDriver::Error::Ok;
+            return value;
         }
 
-        Api::IDriver::Error WriteUint64(const std::filesystem::path& path, std::uint64_t value)
+        [[nodiscard]] Result<void> WriteUint64(const std::filesystem::path& path, const std::uint64_t value)
         {
             std::ofstream output(path);
             if (!output.is_open())
             {
-                return Api::IDriver::Error::IoFailure;
+                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
             }
 
             output << value;
             if (output.fail())
             {
-                return Api::IDriver::Error::IoFailure;
+                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
             }
 
-            return Api::IDriver::Error::Ok;
+            return {};
         }
 
-        Api::IDriver::Error WriteBool(const std::filesystem::path& path, bool value)
+        [[nodiscard]] Result<void> WriteBool(const std::filesystem::path& path, const bool value)
         {
             return WriteUint64(path, value ? 1U : 0U);
         }
 
-        std::expected<std::uint64_t, Api::IDriver::Error> FrequencyToPeriodNs(Hertz frequency)
+        [[nodiscard]] Result<std::uint64_t> FrequencyToPeriodNs(const Hertz frequency)
         {
             if (!std::isfinite(frequency.Value) || frequency.Value <= 0.0)
             {
-                return std::unexpected(Api::IDriver::Error::InvalidArgument);
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
             }
 
             const auto periodNs = static_cast<std::uint64_t>(std::llround(OneSecondNs / frequency.Value));
             if (periodNs == 0U)
             {
-                return std::unexpected(Api::IDriver::Error::InvalidArgument);
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
             }
 
             return periodNs;
         }
 
-        std::uint64_t DutyToDutyCycleNs(const std::uint64_t periodNs, const NormalizedFraction dutyCycle)
+        [[nodiscard]] std::uint64_t DutyToDutyCycleNs(const std::uint64_t periodNs, const NormalizedFraction dutyCycle)
         {
             const auto duty = static_cast<double>(dutyCycle);
             return static_cast<std::uint64_t>(std::llround(static_cast<double>(periodNs) * duty));
         }
 
-        Api::IDriver::Error ApplySignal(
+        [[nodiscard]] Result<void> ApplySignal(
             const std::filesystem::path& pwmChannelPath,
             const std::uint64_t periodNs,
             const std::uint64_t dutyCycleNs,
             const bool enableAfterApply)
         {
-            auto error = WriteBool(BuildNodePath(pwmChannelPath, "enable"), false);
-            if (error != Api::IDriver::Error::Ok)
+            if (auto error = WriteBool(BuildNodePath(pwmChannelPath, "enable"), false); !error.has_value())
             {
                 return error;
             }
 
-            // Ensure period can always be set even if previous duty was larger.
-            error = WriteUint64(BuildNodePath(pwmChannelPath, "duty_cycle"), 0U);
-            if (error != Api::IDriver::Error::Ok)
+            if (auto error = WriteUint64(BuildNodePath(pwmChannelPath, "duty_cycle"), 0U); !error.has_value())
             {
                 return error;
             }
 
-            error = WriteUint64(BuildNodePath(pwmChannelPath, "period"), periodNs);
-            if (error != Api::IDriver::Error::Ok)
+            if (auto error = WriteUint64(BuildNodePath(pwmChannelPath, "period"), periodNs); !error.has_value())
             {
                 return error;
             }
 
-            error = WriteUint64(BuildNodePath(pwmChannelPath, "duty_cycle"), dutyCycleNs);
-            if (error != Api::IDriver::Error::Ok)
+            if (auto error = WriteUint64(BuildNodePath(pwmChannelPath, "duty_cycle"), dutyCycleNs); !error.has_value())
             {
                 return error;
             }
 
             if (!enableAfterApply)
             {
-                return Api::IDriver::Error::Ok;
+                return {};
             }
 
             return WriteBool(BuildNodePath(pwmChannelPath, "enable"), true);
@@ -190,12 +216,11 @@ namespace PiSubmarine::PWM::Linux
     {
     }
 
-    Api::IDriver::Error Driver::SetEnabled(const bool enabled)
+    Result<void> Driver::SetEnabled(const bool enabled)
     {
-        const auto exportError = EnsureChannelExported(m_PwmChannelPath);
-        if (exportError != Error::Ok)
+        if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath); !exportResult.has_value())
         {
-            return exportError;
+            return exportResult;
         }
 
         if (enabled)
@@ -212,11 +237,13 @@ namespace PiSubmarine::PWM::Linux
             }
             else
             {
-                const auto readError = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"), periodNs);
-                if (readError != Error::Ok)
+                const auto periodResult = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"));
+                if (!periodResult.has_value())
                 {
-                    return readError;
+                    return std::unexpected(periodResult.error());
                 }
+
+                periodNs = periodResult.value();
             }
 
             std::uint64_t dutyCycleNs = 0U;
@@ -226,43 +253,50 @@ namespace PiSubmarine::PWM::Linux
             }
             else
             {
-                const auto readError = ReadUint64(BuildNodePath(m_PwmChannelPath, "duty_cycle"), dutyCycleNs);
-                if (readError != Error::Ok)
+                const auto dutyCycleResult = ReadUint64(BuildNodePath(m_PwmChannelPath, "duty_cycle"));
+                if (!dutyCycleResult.has_value())
                 {
-                    return readError;
+                    return std::unexpected(dutyCycleResult.error());
                 }
+
+                dutyCycleNs = dutyCycleResult.value();
             }
 
             if (dutyCycleNs > periodNs)
             {
-                return Error::InvalidArgument;
+                return MakeContractError();
             }
 
-            const auto error = ApplySignal(m_PwmChannelPath, periodNs, dutyCycleNs, true);
-            if (error == Error::Ok)
+            const auto applyResult = ApplySignal(m_PwmChannelPath, periodNs, dutyCycleNs, true);
+            if (applyResult.has_value())
             {
                 m_StagedPeriodNs.reset();
                 m_StagedDutyCycleNs.reset();
             }
-            return error;
+
+            return applyResult;
         }
 
         return WriteBool(BuildNodePath(m_PwmChannelPath, "enable"), false);
     }
 
-    bool Driver::IsEnabled() const
+    Result<bool> Driver::IsEnabled() const
     {
-        const auto exportError = EnsureChannelExported(m_PwmChannelPath);
-        if (exportError != Error::Ok)
+        if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath); !exportResult.has_value())
         {
-            return false;
+            return std::unexpected(exportResult.error());
         }
 
-        std::uint64_t enabled = 0U;
-        return ReadUint64(BuildNodePath(m_PwmChannelPath, "enable"), enabled) == Error::Ok && enabled != 0U;
+        const auto enabledResult = ReadUint64(BuildNodePath(m_PwmChannelPath, "enable"));
+        if (!enabledResult.has_value())
+        {
+            return std::unexpected(enabledResult.error());
+        }
+
+        return enabledResult.value() != 0U;
     }
 
-    std::expected<Hertz, Api::IDriver::Error> Driver::GetFrequency() const
+    Result<Hertz> Driver::GetFrequency() const
     {
         std::uint64_t periodNs = 0U;
         if (m_StagedPeriodNs.has_value())
@@ -271,57 +305,64 @@ namespace PiSubmarine::PWM::Linux
         }
         else
         {
-            const auto exportError = EnsureChannelExported(m_PwmChannelPath);
-            if (exportError != Error::Ok)
+            if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath); !exportResult.has_value())
             {
-                return std::unexpected(exportError);
+                return std::unexpected(exportResult.error());
             }
 
-            const auto error = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"), periodNs);
-            if (error != Error::Ok)
+            const auto periodResult = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"));
+            if (!periodResult.has_value())
             {
-                return std::unexpected(error);
+                return std::unexpected(periodResult.error());
             }
+
+            periodNs = periodResult.value();
         }
 
         if (periodNs == 0U)
         {
-            return std::unexpected(Error::ProtocolError);
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
         }
 
         return Hertz(OneSecondNs / static_cast<double>(periodNs));
     }
 
-    Api::IDriver::Error Driver::SetFrequency(const Hertz frequency)
+    Result<void> Driver::SetFrequency(const Hertz frequency)
     {
-        auto periodNsExpected = FrequencyToPeriodNs(frequency);
+        const auto periodNsExpected = FrequencyToPeriodNs(frequency);
         if (!periodNsExpected.has_value())
         {
-            return periodNsExpected.error();
+            return std::unexpected(periodNsExpected.error());
         }
 
         const auto periodNs = periodNsExpected.value();
-        if (!IsEnabled())
+        const auto enabledResult = IsEnabled();
+        if (!enabledResult.has_value())
+        {
+            return std::unexpected(enabledResult.error());
+        }
+
+        if (!enabledResult.value())
         {
             if (m_StagedDutyCycleNs.has_value() && m_StagedDutyCycleNs.value() > periodNs)
             {
-                return Error::InvalidArgument;
+                return MakeContractError();
             }
 
             m_StagedPeriodNs = periodNs;
-            return Error::Disabled;
+            return {};
         }
 
-        auto dutyExpected = GetDutyCycle();
+        const auto dutyExpected = GetDutyCycle();
         if (!dutyExpected.has_value())
         {
-            return dutyExpected.error();
+            return std::unexpected(dutyExpected.error());
         }
 
         return SetFrequencyAndDuty(frequency, dutyExpected.value());
     }
 
-    std::expected<NormalizedFraction, Api::IDriver::Error> Driver::GetDutyCycle() const
+    Result<NormalizedFraction> Driver::GetDutyCycle() const
     {
         std::uint64_t periodNs = 0U;
         if (m_StagedPeriodNs.has_value())
@@ -330,16 +371,23 @@ namespace PiSubmarine::PWM::Linux
         }
         else
         {
-            const auto periodError = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"), periodNs);
-            if (periodError != Error::Ok)
+            if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath); !exportResult.has_value())
             {
-                return std::unexpected(periodError);
+                return std::unexpected(exportResult.error());
             }
+
+            const auto periodResult = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"));
+            if (!periodResult.has_value())
+            {
+                return std::unexpected(periodResult.error());
+            }
+
+            periodNs = periodResult.value();
         }
 
         if (periodNs == 0U)
         {
-            return std::unexpected(Error::ProtocolError);
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
         }
 
         std::uint64_t dutyCycleNs = 0U;
@@ -349,11 +397,13 @@ namespace PiSubmarine::PWM::Linux
         }
         else
         {
-            const auto dutyError = ReadUint64(BuildNodePath(m_PwmChannelPath, "duty_cycle"), dutyCycleNs);
-            if (dutyError != Error::Ok)
+            const auto dutyCycleResult = ReadUint64(BuildNodePath(m_PwmChannelPath, "duty_cycle"));
+            if (!dutyCycleResult.has_value())
             {
-                return std::unexpected(dutyError);
+                return std::unexpected(dutyCycleResult.error());
             }
+
+            dutyCycleNs = dutyCycleResult.value();
         }
 
         const auto rawDuty = static_cast<double>(dutyCycleNs) / static_cast<double>(periodNs);
@@ -361,7 +411,7 @@ namespace PiSubmarine::PWM::Linux
         return NormalizedFraction(clampedDuty);
     }
 
-    Api::IDriver::Error Driver::SetDutyCycle(const NormalizedFraction duty)
+    Result<void> Driver::SetDutyCycle(const NormalizedFraction duty)
     {
         std::uint64_t periodNs = 0U;
         if (m_StagedPeriodNs.has_value())
@@ -370,63 +420,74 @@ namespace PiSubmarine::PWM::Linux
         }
         else
         {
-            const auto exportError = EnsureChannelExported(m_PwmChannelPath);
-            if (exportError != Error::Ok)
+            if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath); !exportResult.has_value())
             {
-                return exportError;
+                return exportResult;
             }
 
-            const auto periodError = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"), periodNs);
-            if (periodError != Error::Ok)
+            const auto periodResult = ReadUint64(BuildNodePath(m_PwmChannelPath, "period"));
+            if (!periodResult.has_value())
             {
-                return periodError;
+                return std::unexpected(periodResult.error());
             }
+
+            periodNs = periodResult.value();
         }
 
         if (periodNs == 0U)
         {
-            return Error::ProtocolError;
+            return MakeDeviceError();
         }
 
         const auto dutyCycleNs = DutyToDutyCycleNs(periodNs, duty);
-        if (!IsEnabled())
+        const auto enabledResult = IsEnabled();
+        if (!enabledResult.has_value())
+        {
+            return std::unexpected(enabledResult.error());
+        }
+
+        if (!enabledResult.value())
         {
             m_StagedDutyCycleNs = dutyCycleNs;
-            return Error::Disabled;
+            return {};
         }
 
         return WriteUint64(BuildNodePath(m_PwmChannelPath, "duty_cycle"), dutyCycleNs);
     }
 
-    Api::IDriver::Error Driver::SetFrequencyAndDuty(const Hertz frequency, const NormalizedFraction duty)
+    Result<void> Driver::SetFrequencyAndDuty(const Hertz frequency, const NormalizedFraction duty)
     {
-        auto periodNsExpected = FrequencyToPeriodNs(frequency);
+        const auto periodNsExpected = FrequencyToPeriodNs(frequency);
         if (!periodNsExpected.has_value())
         {
-            return periodNsExpected.error();
+            return std::unexpected(periodNsExpected.error());
         }
 
         const auto periodNs = periodNsExpected.value();
         const auto dutyCycleNs = DutyToDutyCycleNs(periodNs, duty);
         if (dutyCycleNs > periodNs)
         {
-            return Error::InvalidArgument;
+            return MakeContractError();
         }
 
-        if (!IsEnabled())
+        const auto enabledResult = IsEnabled();
+        if (!enabledResult.has_value())
+        {
+            return std::unexpected(enabledResult.error());
+        }
+
+        if (!enabledResult.value())
         {
             m_StagedPeriodNs = periodNs;
             m_StagedDutyCycleNs = dutyCycleNs;
-            return Error::Disabled;
+            return {};
         }
 
-        const auto exportError = EnsureChannelExported(m_PwmChannelPath);
-        if (exportError != Error::Ok)
+        if (const auto exportResult = EnsureChannelExported(m_PwmChannelPath); !exportResult.has_value())
         {
-            return exportError;
+            return exportResult;
         }
 
         return ApplySignal(m_PwmChannelPath, periodNs, dutyCycleNs, true);
     }
-
 }

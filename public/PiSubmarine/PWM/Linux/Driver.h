@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+
 #include "PiSubmarine/PWM/Api/IDriver.h"
 
 namespace PiSubmarine::PWM::Linux
@@ -12,13 +13,13 @@ namespace PiSubmarine::PWM::Linux
     public:
         explicit Driver(std::filesystem::path pwmChannelPath = "/sys/class/pwm/pwmchip0/pwm0");
 
-        [[nodiscard]] Error SetEnabled(bool enabled) override;
-        [[nodiscard]] bool IsEnabled() const override;
-        [[nodiscard]] std::expected<Hertz, Error> GetFrequency() const override;
-        [[nodiscard]] Error SetFrequency(Hertz frequency) override;
-        [[nodiscard]] std::expected<NormalizedFraction, Error> GetDutyCycle() const override;
-        [[nodiscard]] Error SetDutyCycle(NormalizedFraction duty) override;
-        [[nodiscard]] Error SetFrequencyAndDuty(Hertz frequency, NormalizedFraction duty) override;
+        [[nodiscard]] PiSubmarine::Error::Api::Result<void> SetEnabled(bool enabled) override;
+        [[nodiscard]] PiSubmarine::Error::Api::Result<bool> IsEnabled() const override;
+        [[nodiscard]] PiSubmarine::Error::Api::Result<Hertz> GetFrequency() const override;
+        [[nodiscard]] PiSubmarine::Error::Api::Result<void> SetFrequency(Hertz frequency) override;
+        [[nodiscard]] PiSubmarine::Error::Api::Result<NormalizedFraction> GetDutyCycle() const override;
+        [[nodiscard]] PiSubmarine::Error::Api::Result<void> SetDutyCycle(NormalizedFraction duty) override;
+        [[nodiscard]] PiSubmarine::Error::Api::Result<void> SetFrequencyAndDuty(Hertz frequency, NormalizedFraction duty) override;
 
     private:
         std::filesystem::path m_PwmChannelPath;

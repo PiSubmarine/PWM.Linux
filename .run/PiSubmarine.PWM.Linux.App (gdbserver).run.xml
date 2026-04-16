@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="PiSubmarine.PWM.Linux.App (gdbserver)" type="com.jetbrains.cidr.remote.gdbserver.type" factoryName="com.jetbrains.cidr.remote.gdbserver.factory" PROGRAM_PARAMS=":1234 /tmp/CLion/debug/PiSubmarine.PWM.Linux.App --pwm-path /sys/class/pwm/pwmchip0/pwm0 --frequency-hz 50 --duty 0.075 --enable 1" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="PiSubmarine.PWM.Linux" TARGET_NAME="PiSubmarine.PWM.Linux.App" CONFIG_NAME="pisubmarine-ssh-debug" version="1" RUN_TARGET_PROJECT_NAME="PiSubmarine.PWM.Linux" RUN_TARGET_NAME="PiSubmarine.PWM.Linux.App">
+    <custom-gdb-server version="1" gdb-connect="SmartHouse-Slowhorse:1234" executable="" warmup-ms="0" download-type="NONE" sshConfigName="SmartHouse@SmartHouse-Slowhorse:22 key" uploadFile="/tmp/CLion/debug/PiSubmarine.PWM.Linux.App" defaultGdbServerArgs=":1234 /tmp/CLion/debug/PiSubmarine.PWM.Linux.App">
+      <debugger kind="GDB" isBundled="true" />
+    </custom-gdb-server>
+    <method v="2">
+      <option name="CLION.COMPOUND.BUILD" enabled="true" />
+    </method>
+  </configuration>
+</component>

@@ -5,36 +5,41 @@
 #include <boost/program_options.hpp>
 #include <spdlog/spdlog.h>
 
+#include "PiSubmarine/Error/Api/Error.h"
 #include "PiSubmarine/PWM/Linux/Driver.h"
 
 namespace po = boost::program_options;
 
 namespace
 {
-    const char* ToString(const PiSubmarine::PWM::Api::IDriver::Error error)
+    [[nodiscard]] std::string ToString(const PiSubmarine::Error::Api::Error& error)
     {
-        using Error = PiSubmarine::PWM::Api::IDriver::Error;
-        switch (error)
+        std::string message;
+        switch (error.Condition)
         {
-        case Error::Ok:
-            return "Ok";
-        case Error::Disabled:
-            return "Disabled";
-        case Error::InvalidArgument:
-            return "InvalidArgument";
-        case Error::ProtocolError:
-            return "ProtocolError";
-        case Error::UnsupportedParameter:
-            return "UnsupportedParameter";
-        case Error::Busy:
-            return "Busy";
-        case Error::IoFailure:
-            return "IoFailure";
-        case Error::UnknownError:
-            return "UnknownError";
+        case PiSubmarine::Error::Api::ErrorCondition::ContractError:
+            message = "ContractError";
+            break;
+
+        case PiSubmarine::Error::Api::ErrorCondition::CommunicationError:
+            message = "CommunicationError";
+            break;
+
+        case PiSubmarine::Error::Api::ErrorCondition::DeviceError:
+            message = "DeviceError";
+            break;
+
+        case PiSubmarine::Error::Api::ErrorCondition::UnknownError:
+            message = "UnknownError";
+            break;
         }
 
-        return "UnknownError";
+        if (error.HasCause())
+        {
+            message += " (" + error.Cause.message() + ")";
+        }
+
+        return message;
     }
 }
 
@@ -86,30 +91,42 @@ int main(int argc, char* argv[])
 
         if (hasFrequency && hasDuty)
         {
-            const auto error = driver.SetFrequencyAndDuty(
+            const auto result = driver.SetFrequencyAndDuty(
                 PiSubmarine::Hertz(frequencyHzValue),
                 PiSubmarine::NormalizedFraction(dutyValue));
-            spdlog::info("SetFrequencyAndDuty({}, {}) -> {}", frequencyHzValue, dutyValue, ToString(error));
+            if (!result.has_value())
+            {
+                spdlog::error("SetFrequencyAndDuty({}, {}) failed: {}", frequencyHzValue, dutyValue, ToString(result.error()));
+            }
         }
         else
         {
             if (hasFrequency)
             {
-                const auto error = driver.SetFrequency(PiSubmarine::Hertz(frequencyHzValue));
-                spdlog::info("SetFrequency({}) -> {}", frequencyHzValue, ToString(error));
+                const auto result = driver.SetFrequency(PiSubmarine::Hertz(frequencyHzValue));
+                if (!result.has_value())
+                {
+                    spdlog::error("SetFrequency({}) failed: {}", frequencyHzValue, ToString(result.error()));
+                }
             }
 
             if (hasDuty)
             {
-                const auto error = driver.SetDutyCycle(PiSubmarine::NormalizedFraction(dutyValue));
-                spdlog::info("SetDutyCycle({}) -> {}", dutyValue, ToString(error));
+                const auto result = driver.SetDutyCycle(PiSubmarine::NormalizedFraction(dutyValue));
+                if (!result.has_value())
+                {
+                    spdlog::error("SetDutyCycle({}) failed: {}", dutyValue, ToString(result.error()));
+                }
             }
         }
 
         if (hasEnable)
         {
-            const auto error = driver.SetEnabled(enableValue != 0);
-            spdlog::info("SetEnabled({}) -> {}", enableValue, ToString(error));
+            const auto result = driver.SetEnabled(enableValue != 0);
+            if (!result.has_value())
+            {
+                spdlog::error("SetEnabled({}) failed: {}", enableValue, ToString(result.error()));
+            }
         }
 
         const auto frequency = driver.GetFrequency();
@@ -132,7 +149,16 @@ int main(int argc, char* argv[])
             spdlog::warn("GetDutyCycle failed: {}", ToString(dutyCycle.error()));
         }
 
-        spdlog::info("Enabled: {}", driver.IsEnabled() ? "true" : "false");
+        const auto enabled = driver.IsEnabled();
+        if (enabled.has_value())
+        {
+            spdlog::info("Enabled: {}", enabled.value() ? "true" : "false");
+        }
+        else
+        {
+            spdlog::warn("IsEnabled failed: {}", ToString(enabled.error()));
+        }
+
         return 0;
     }
     catch (const po::error& ex)

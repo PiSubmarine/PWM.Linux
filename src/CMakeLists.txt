@@ -8,3 +8,6 @@ PiSubmarineInitTarget(${PISUBMARINE_MODULE_NAME})
 
 PiSubmarineAddDependency("https://github.com/PiSubmarine/PWM.Api.git" "")
 target_link_libraries(${PISUBMARINE_MODULE_NAME} PiSubmarine.PWM.Api)
+
+PiSubmarineAddDependency("https://github.com/PiSubmarine/Error.Api.git" "")
+target_link_libraries(${PISUBMARINE_MODULE_NAME} PiSubmarine.Error.Api)
