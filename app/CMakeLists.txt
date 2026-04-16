@@ -3,7 +3,7 @@ include("${PISUBMARINE_BUILD_SYSTEM}")
 project(${PISUBMARINE_MODULE_NAME}.App LANGUAGES CXX)
 
 message("Adding executable: ${PISUBMARINE_MODULE_NAME}.App")
-add_executable(${PISUBMARINE_MODULE_NAME}.App PiSubmarine/ModuleTemplate/main.cpp)
+add_executable(${PISUBMARINE_MODULE_NAME}.App PiSubmarine/PWM/Linux/main.cpp)
 PiSubmarineInitTarget(${PISUBMARINE_MODULE_NAME}.App)
 
 target_include_directories(${PISUBMARINE_MODULE_NAME}.App PRIVATE ./)

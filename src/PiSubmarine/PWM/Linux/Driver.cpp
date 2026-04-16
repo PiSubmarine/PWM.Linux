@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "PiSubmarine/Error/Api/MakeError.h"
+#include "PiSubmarine/PWM/Linux/ErrorCode.h"
 
 namespace PiSubmarine::PWM::Linux
 {
@@ -23,24 +24,19 @@ namespace PiSubmarine::PWM::Linux
 
         constexpr double OneSecondNs = 1'000'000'000.0;
 
-        [[nodiscard]] Result<void> MakeContractError() noexcept
+        [[nodiscard]] Result<void> MakeContractError(const ErrorCode cause) noexcept
         {
-            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError, make_error_code(cause)));
         }
 
-        [[nodiscard]] Result<void> MakeCommunicationError() noexcept
+        [[nodiscard]] Result<void> MakeCommunicationError(const ErrorCode cause) noexcept
         {
-            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::CommunicationError));
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::CommunicationError, make_error_code(cause)));
         }
 
-        [[nodiscard]] Result<void> MakeCommunicationError(const std::error_code cause) noexcept
+        [[nodiscard]] Result<void> MakeDeviceError(const ErrorCode cause) noexcept
         {
-            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::CommunicationError, cause));
-        }
-
-        [[nodiscard]] Result<void> MakeDeviceError() noexcept
-        {
-            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError, make_error_code(cause)));
         }
 
         [[nodiscard]] std::filesystem::path BuildNodePath(const std::filesystem::path& pwmChannelPath, const char* const nodeName)
@@ -54,7 +50,9 @@ namespace PiSubmarine::PWM::Linux
             constexpr std::string_view Prefix = "pwm";
             if (channelName.size() <= Prefix.size() || channelName.rfind(Prefix.data(), 0) != 0)
             {
-                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                    ErrorCondition::ContractError,
+                    make_error_code(ErrorCode::InvalidChannelPath)));
             }
 
             try
@@ -64,7 +62,9 @@ namespace PiSubmarine::PWM::Linux
             }
             catch (...)
             {
-                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                    ErrorCondition::ContractError,
+                    make_error_code(ErrorCode::ChannelIndexParseFailed)));
             }
         }
 
@@ -85,7 +85,7 @@ namespace PiSubmarine::PWM::Linux
             std::ofstream exportFile(chipPath / "export");
             if (!exportFile.is_open())
             {
-                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
+                return MakeCommunicationError(ErrorCode::ExportNodeOpenFailed);
             }
 
             exportFile << channelIndexExpected.value();
@@ -96,7 +96,7 @@ namespace PiSubmarine::PWM::Linux
                     return {};
                 }
 
-                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
+                return MakeCommunicationError(ErrorCode::ExportWriteFailed);
             }
 
             for (int attempt = 0; attempt < 50; ++attempt)
@@ -109,7 +109,7 @@ namespace PiSubmarine::PWM::Linux
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
 
-            return MakeCommunicationError(std::make_error_code(std::errc::timed_out));
+            return MakeCommunicationError(ErrorCode::ExportTimedOut);
         }
 
         [[nodiscard]] Result<std::uint64_t> ReadUint64(const std::filesystem::path& path)
@@ -119,14 +119,16 @@ namespace PiSubmarine::PWM::Linux
             {
                 return std::unexpected(PiSubmarine::Error::Api::MakeError(
                     ErrorCondition::CommunicationError,
-                    std::make_error_code(std::errc::io_error)));
+                    make_error_code(ErrorCode::NodeOpenFailed)));
             }
 
             std::uint64_t value = 0;
             input >> value;
             if (input.fail())
             {
-                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                    ErrorCondition::DeviceError,
+                    make_error_code(ErrorCode::InvalidNodeValue)));
             }
 
             return value;
@@ -137,13 +139,13 @@ namespace PiSubmarine::PWM::Linux
             std::ofstream output(path);
             if (!output.is_open())
             {
-                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
+                return MakeCommunicationError(ErrorCode::NodeOpenFailed);
             }
 
             output << value;
             if (output.fail())
             {
-                return MakeCommunicationError(std::make_error_code(std::errc::io_error));
+                return MakeCommunicationError(ErrorCode::NodeWriteFailed);
             }
 
             return {};
@@ -158,13 +160,17 @@ namespace PiSubmarine::PWM::Linux
         {
             if (!std::isfinite(frequency.Value) || frequency.Value <= 0.0)
             {
-                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                    ErrorCondition::ContractError,
+                    make_error_code(ErrorCode::NonPositiveFrequency)));
             }
 
             const auto periodNs = static_cast<std::uint64_t>(std::llround(OneSecondNs / frequency.Value));
             if (periodNs == 0U)
             {
-                return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::ContractError));
+                return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                    ErrorCondition::ContractError,
+                    make_error_code(ErrorCode::UnrepresentableFrequency)));
             }
 
             return periodNs;
@@ -264,7 +270,7 @@ namespace PiSubmarine::PWM::Linux
 
             if (dutyCycleNs > periodNs)
             {
-                return MakeContractError();
+                return MakeContractError(ErrorCode::DutyCycleExceedsPeriod);
             }
 
             const auto applyResult = ApplySignal(m_PwmChannelPath, periodNs, dutyCycleNs, true);
@@ -321,7 +327,9 @@ namespace PiSubmarine::PWM::Linux
 
         if (periodNs == 0U)
         {
-            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                ErrorCondition::DeviceError,
+                make_error_code(ErrorCode::ZeroPeriod)));
         }
 
         return Hertz(OneSecondNs / static_cast<double>(periodNs));
@@ -346,7 +354,7 @@ namespace PiSubmarine::PWM::Linux
         {
             if (m_StagedDutyCycleNs.has_value() && m_StagedDutyCycleNs.value() > periodNs)
             {
-                return MakeContractError();
+                return MakeContractError(ErrorCode::DutyCycleExceedsPeriod);
             }
 
             m_StagedPeriodNs = periodNs;
@@ -387,7 +395,9 @@ namespace PiSubmarine::PWM::Linux
 
         if (periodNs == 0U)
         {
-            return std::unexpected(PiSubmarine::Error::Api::MakeError(ErrorCondition::DeviceError));
+            return std::unexpected(PiSubmarine::Error::Api::MakeError(
+                ErrorCondition::DeviceError,
+                make_error_code(ErrorCode::ZeroPeriod)));
         }
 
         std::uint64_t dutyCycleNs = 0U;
@@ -436,7 +446,7 @@ namespace PiSubmarine::PWM::Linux
 
         if (periodNs == 0U)
         {
-            return MakeDeviceError();
+            return MakeDeviceError(ErrorCode::ZeroPeriod);
         }
 
         const auto dutyCycleNs = DutyToDutyCycleNs(periodNs, duty);
@@ -467,7 +477,7 @@ namespace PiSubmarine::PWM::Linux
         const auto dutyCycleNs = DutyToDutyCycleNs(periodNs, duty);
         if (dutyCycleNs > periodNs)
         {
-            return MakeContractError();
+            return MakeContractError(ErrorCode::DutyCycleExceedsPeriod);
         }
 
         const auto enabledResult = IsEnabled();
