@@ -11,7 +11,7 @@ namespace PiSubmarine::PWM::Linux
     class Driver : public Api::IDriver
     {
     public:
-        explicit Driver(std::filesystem::path pwmChannelPath = "/sys/class/pwm/pwmchip0/pwm0");
+        explicit Driver(std::filesystem::path pwmChannelPath = "/sys/class/pwm/pwmchip0/pwm0", std::chrono::milliseconds exportCheckInterval = std::chrono::milliseconds(100), size_t exportCheckAttempts = 50U);
 
         [[nodiscard]] PiSubmarine::Error::Api::Result<void> SetEnabled(bool enabled) override;
         [[nodiscard]] PiSubmarine::Error::Api::Result<bool> IsEnabled() const override;
@@ -25,5 +25,7 @@ namespace PiSubmarine::PWM::Linux
         std::filesystem::path m_PwmChannelPath;
         std::optional<std::uint64_t> m_StagedPeriodNs;
         std::optional<std::uint64_t> m_StagedDutyCycleNs;
+        size_t m_ExportCheckAttempts = 50U;
+        std::chrono::milliseconds m_ExportCheckInterval = std::chrono::milliseconds(100);
     };
 }
